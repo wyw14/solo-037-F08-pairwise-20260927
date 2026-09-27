@@ -3,9 +3,11 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/wyw14/solo-037/internal/journal"
 	"github.com/wyw14/solo-037/internal/model"
 )
 
@@ -15,11 +17,13 @@ type Runtime struct {
 	operations   map[model.RunID]model.Operation
 	incidents    []model.Incident
 	Measurements *MeasurementArchive
+	process      *journal.Store
 }
 
 func NewRuntime() *Runtime {
 	archive, _ := OpenMeasurementArchive("")
-	return newRuntime(archive)
+	process, _ := journal.NewStore("")
+	return newRuntime(archive, process)
 }
 
 func OpenRuntime(directory string) (*Runtime, error) {
@@ -27,11 +31,15 @@ func OpenRuntime(directory string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newRuntime(archive), nil
+	process, err := journal.NewStore(filepath.Join(directory, "process"))
+	if err != nil {
+		return nil, err
+	}
+	return newRuntime(archive, process), nil
 }
 
-func newRuntime(archive *MeasurementArchive) *Runtime {
-	runtime := &Runtime{started: time.Now().UTC(), operations: make(map[model.RunID]model.Operation), Measurements: archive}
+func newRuntime(archive *MeasurementArchive, process *journal.Store) *Runtime {
+	runtime := &Runtime{started: time.Now().UTC(), operations: make(map[model.RunID]model.Operation), Measurements: archive, process: process}
 	operation := model.NewOperation("commissioning", "benchmark-hull", "section-a", "carriage-1", runtime.started)
 	runtime.operations[operation.ID] = operation
 	coordinator := NewCoordinator(runtime)

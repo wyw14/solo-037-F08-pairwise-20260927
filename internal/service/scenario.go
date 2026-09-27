@@ -15,7 +15,16 @@ type ScenarioEvent struct {
     Component string `json:"component"`
     Detail string `json:"detail"`
     At time.Time `json:"at"`
+    Origin string `json:"origin,omitempty"`
+    Present bool `json:"present"`
+    RecordID model.EventID `json:"record_id,omitempty"`
+    Segment string `json:"segment,omitempty"`
 }
+
+const (
+    OriginDrill = "drill"
+    OriginReal = "real"
+)
 
 type Scenario struct {
     mu sync.Mutex
@@ -34,7 +43,7 @@ func NewScenario(name string, run model.RunID, revision model.RevisionID, at tim
 func (s *Scenario) Add(kind string, component string, detail string, at time.Time) ScenarioEvent {
     s.mu.Lock()
     defer s.mu.Unlock()
-    event := ScenarioEvent{ID: model.NewEventID(), Run: s.Run, Kind: kind, Component: component, Detail: detail, At: at.UTC()}
+    event := ScenarioEvent{ID: model.NewEventID(), Run: s.Run, Kind: kind, Component: component, Detail: detail, At: at.UTC(), Origin: OriginDrill, Present: true}
     s.events = append(s.events, event)
     return event
 }
@@ -87,16 +96,28 @@ func (s *Scenario) KindCounts() map[string]int {
     return result
 }
 
+func (s *Scenario) MissingCount() int {
+    missing := 0
+    for _, event := range s.Events() {
+        if !event.Present {
+            missing++
+        }
+    }
+    return missing
+}
+
 func (s *Scenario) Summary() map[string]any {
     return map[string]any{
         "name": s.Name,
         "run": s.Run,
         "revision": s.Revision,
+        "origin": OriginDrill,
         "started": s.Started,
         "finished": s.Finished,
         "duration": s.Duration().String(),
         "failed": s.Failed(),
         "events": len(s.Events()),
+        "missing": s.MissingCount(),
         "components": s.ComponentCounts(),
         "kinds": s.KindCounts(),
     }

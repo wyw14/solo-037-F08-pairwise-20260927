@@ -12,6 +12,7 @@ type ReplayState struct {
     Stage model.RunStage `json:"stage"`
     Fence uint64 `json:"fence"`
     Evidence int `json:"evidence"`
+    Commands int `json:"commands"`
     LastKind string `json:"last_kind"`
 }
 
@@ -39,6 +40,8 @@ func Replay(records []Record, run model.RunID) ReplayState {
             }
         case "wave_trace", "force_trace":
             state.Evidence++
+        case "command":
+            state.Commands++
         }
     }
     return state

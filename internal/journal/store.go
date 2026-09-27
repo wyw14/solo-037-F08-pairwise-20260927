@@ -28,10 +28,13 @@ type Store struct {
 }
 
 func NewStore(directory string) (*Store, error) {
+    store := &Store{directory: directory}
+    if directory == "" {
+        return store, nil
+    }
     if err := os.MkdirAll(directory, 0755); err != nil {
         return nil, err
     }
-    store := &Store{directory: directory}
     if err := store.load(); err != nil {
         return nil, err
     }
@@ -82,6 +85,10 @@ func (s *Store) AppendBatch(records []Record) error {
         }
     }
     pending := append(append([]Record{}, s.records...), records...)
+    if s.directory == "" {
+        s.records = pending
+        return nil
+    }
     temporary := s.path() + ".pending"
     file, err := os.Create(temporary)
     if err != nil {

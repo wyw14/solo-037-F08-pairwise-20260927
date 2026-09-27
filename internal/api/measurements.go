@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/wyw14/solo-037/internal/model"
@@ -16,6 +17,10 @@ type MeasurementService interface {
 	MeasuredRuns() []service.MeasuredRun
 	MeasuredRun(model.RunID) (service.MeasuredRun, bool)
 	AnalyzeMeasuredRun(model.RunID) (service.MeasurementAnalysis, error)
+	MeasuredRunTimeline(model.RunID) (service.ProcessTimeline, error)
+	AdvanceMeasuredRun(id model.RunID, stage model.RunStage, at time.Time) (service.MeasuredRun, error)
+	LeaseMeasuredRun(id model.RunID, fence uint64, at time.Time) (uint64, error)
+	RecordMeasuredCommand(id model.RunID, input service.CommandInput) (model.DeviceCommand, error)
 }
 
 type createMeasuredRunRequest struct {

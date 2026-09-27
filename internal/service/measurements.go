@@ -150,6 +150,33 @@ func (a *MeasurementArchive) Record(id model.RunID, input MeasurementInput) (mod
 	return evidence, nil
 }
 
+func (a *MeasurementArchive) Advance(id model.RunID, stage model.RunStage, at time.Time) (MeasuredRun, error) {
+	if err := model.ValidateStage(stage); err != nil {
+		return MeasuredRun{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	run, exists := a.runs[id]
+	if !exists {
+		return MeasuredRun{}, errors.New("run not found")
+	}
+	operation, err := run.Operation.Advance(stage, at)
+	if err != nil {
+		return MeasuredRun{}, err
+	}
+	run = cloneMeasuredRun(run)
+	run.Operation = operation
+	next := make(map[model.RunID]MeasuredRun, len(a.runs))
+	for key, value := range a.runs {
+		next[key] = value
+	}
+	next[id] = run
+	if err := a.commit(next); err != nil {
+		return MeasuredRun{}, err
+	}
+	return run, nil
+}
+
 func (a *MeasurementArchive) Get(id model.RunID) (MeasuredRun, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -188,14 +215,6 @@ func (a *MeasurementArchive) Analyze(id model.RunID) (MeasurementAnalysis, error
 		result.ForceMean /= float64(result.ForceCount)
 	}
 	return result, nil
-}
-
-func (r *Runtime) CreateMeasuredRun(name, modelName, section, carriage string) (MeasuredRun, error) {
-	return r.Measurements.Create(name, modelName, section, carriage)
-}
-
-func (r *Runtime) RecordMeasurement(id model.RunID, input MeasurementInput) (model.Evidence, error) {
-	return r.Measurements.Record(id, input)
 }
 
 func (r *Runtime) MeasuredRuns() []MeasuredRun { return r.Measurements.List() }
