@@ -8,6 +8,15 @@ import (
     "github.com/wyw14/solo-037/internal/model"
 )
 
+const (
+    // EventSourceDrill marks events fabricated by the fixed commissioning drill.
+    EventSourceDrill = "drill"
+    // EventSourcePersisted marks events rebuilt from durable run records.
+    EventSourcePersisted = "persisted"
+    // EventSourceMissing marks gaps where a process step was expected but no record exists.
+    EventSourceMissing = "missing"
+)
+
 type ScenarioEvent struct {
     ID model.EventID `json:"id"`
     Run model.RunID `json:"run"`
@@ -15,6 +24,7 @@ type ScenarioEvent struct {
     Component string `json:"component"`
     Detail string `json:"detail"`
     At time.Time `json:"at"`
+    Source string `json:"source"`
 }
 
 type Scenario struct {
@@ -32,9 +42,24 @@ func NewScenario(name string, run model.RunID, revision model.RevisionID, at tim
 }
 
 func (s *Scenario) Add(kind string, component string, detail string, at time.Time) ScenarioEvent {
+    return s.add(kind, component, detail, at, EventSourceDrill)
+}
+
+// AddObserved appends an event rebuilt from a persisted run record.
+func (s *Scenario) AddObserved(kind string, component string, detail string, at time.Time) ScenarioEvent {
+    return s.add(kind, component, detail, at, EventSourcePersisted)
+}
+
+// AddMissing marks a process segment that the timeline expected but could not
+// find a durable record for.
+func (s *Scenario) AddMissing(kind string, component string, detail string, at time.Time) ScenarioEvent {
+    return s.add(kind, component, detail, at, EventSourceMissing)
+}
+
+func (s *Scenario) add(kind string, component string, detail string, at time.Time, source string) ScenarioEvent {
     s.mu.Lock()
     defer s.mu.Unlock()
-    event := ScenarioEvent{ID: model.NewEventID(), Run: s.Run, Kind: kind, Component: component, Detail: detail, At: at.UTC()}
+    event := ScenarioEvent{ID: model.NewEventID(), Run: s.Run, Kind: kind, Component: component, Detail: detail, At: at.UTC(), Source: source}
     s.events = append(s.events, event)
     return event
 }
@@ -51,6 +76,25 @@ func (s *Scenario) Events() []ScenarioEvent {
     result := append([]ScenarioEvent{}, s.events...)
     sort.SliceStable(result, func(i int, j int) bool { return result[i].At.Before(result[j].At) })
     return result
+}
+
+// Reconcile drops previously rebuilt events (persisted and missing), keeps the
+// original drill events, and installs a freshly rebuilt timeline. Backfilled
+// records therefore replace the missing segments they cover.
+func (s *Scenario) Reconcile(observed []ScenarioEvent, finished time.Time) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    kept := make([]ScenarioEvent, 0, len(s.events))
+    for _, event := range s.events {
+        if event.Source == EventSourceDrill {
+            kept = append(kept, event)
+        }
+    }
+    s.events = append(kept, observed...)
+    sort.SliceStable(s.events, func(i int, j int) bool { return s.events[i].At.Before(s.events[j].At) })
+    if !finished.IsZero() {
+        s.Finished = finished.UTC()
+    }
 }
 
 func (s *Scenario) Duration() time.Duration {
@@ -87,6 +131,25 @@ func (s *Scenario) KindCounts() map[string]int {
     return result
 }
 
+func (s *Scenario) SourceCounts() map[string]int {
+    result := make(map[string]int)
+    for _, event := range s.Events() {
+        result[event.Source]++
+    }
+    return result
+}
+
+// Missing returns the timeline segments that could not be backed by a record.
+func (s *Scenario) Missing() []ScenarioEvent {
+    result := make([]ScenarioEvent, 0)
+    for _, event := range s.Events() {
+        if event.Source == EventSourceMissing {
+            result = append(result, event)
+        }
+    }
+    return result
+}
+
 func (s *Scenario) Summary() map[string]any {
     return map[string]any{
         "name": s.Name,
@@ -99,7 +162,17 @@ func (s *Scenario) Summary() map[string]any {
         "events": len(s.Events()),
         "components": s.ComponentCounts(),
         "kinds": s.KindCounts(),
+        "sources": s.SourceCounts(),
+        "missing": len(s.Missing()),
     }
+}
+
+// Report returns a JSON-safe view combining the summary with the ordered
+// timeline events, so replay endpoints can expose events despite the mutex.
+func (s *Scenario) Report() map[string]any {
+    summary := s.Summary()
+    summary["timeline"] = s.Events()
+    return summary
 }
 
 func MergeScenarios(name string, scenarios ...*Scenario) *Scenario {

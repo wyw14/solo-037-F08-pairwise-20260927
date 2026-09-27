@@ -16,6 +16,7 @@ type MeasurementService interface {
 	MeasuredRuns() []service.MeasuredRun
 	MeasuredRun(model.RunID) (service.MeasuredRun, bool)
 	AnalyzeMeasuredRun(model.RunID) (service.MeasurementAnalysis, error)
+	ReplayMeasuredRun(model.RunID) (*service.Scenario, error)
 }
 
 type createMeasuredRunRequest struct {
@@ -89,4 +90,13 @@ func (r *Router) measurementAnalysis(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(w, value)
+}
+
+func (r *Router) measuredRunReplay(w http.ResponseWriter, request *http.Request) {
+	scenario, err := r.dependencies.ReplayMeasuredRun(model.RunID(chi.URLParam(request, "id")))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, scenario.Report())
 }

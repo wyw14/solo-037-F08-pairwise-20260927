@@ -29,6 +29,10 @@ func FenceRecord(run model.RunID, fence uint64, at time.Time) (Record, error) {
     return NewRecord(run, "fence", fence, at)
 }
 
+func CommandRecord(command model.DeviceCommand, at time.Time) (Record, error) {
+    return NewRecord(command.Run, "command", command, at)
+}
+
 func EvidenceRecord(evidence model.Evidence, at time.Time) (Record, error) {
     kind := "wave_trace"
     if evidence.Kind == model.EvidenceForce {

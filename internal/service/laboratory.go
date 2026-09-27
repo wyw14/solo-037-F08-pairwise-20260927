@@ -103,11 +103,30 @@ func (l *Laboratory) Exercise(at time.Time) map[string]any {
         return map[string]any{"error": leaseErr.Error()}
     }
     l.TrackState.Assign(operation.ID, lease.Fence)
+    stageRecord, stageErr := journal.StageRecord(operation.ID, model.StageConfigured, at)
+    if stageErr == nil {
+        _ = l.Store.Append(stageRecord)
+    }
+    if fenceRecord, fenceErr := journal.FenceRecord(operation.ID, lease.Fence, at); fenceErr == nil {
+        _ = l.Store.Append(fenceRecord)
+    }
+    if armingRecord, armingErr := journal.StageRecord(operation.ID, model.StageArming, at); armingErr == nil {
+        _ = l.Store.Append(armingRecord)
+    }
     command := l.Carriage.Accelerate(operation.ID, 1, lease.Fence, 1.4, at.Add(time.Millisecond))
+    if commandRecord, commandErr := journal.CommandRecord(command, command.IssuedAt); commandErr == nil {
+        _ = l.Store.Append(commandRecord)
+    }
+    if acceleratingRecord, acceleratingErr := journal.StageRecord(operation.ID, model.StageAccelerating, command.IssuedAt); acceleratingErr == nil {
+        _ = l.Store.Append(acceleratingRecord)
+    }
     l.Metrics.Event()
     l.Position.SetWindow(5, 15)
     positionWindow := l.Position.Observe(10)
     profile := wave.NewProfile(0.8, 0.01, 30*time.Millisecond)
+    if measuringRecord, measuringErr := journal.StageRecord(operation.ID, model.StageMeasuring, at.Add(2*time.Millisecond)); measuringErr == nil {
+        _ = l.Store.Append(measuringRecord)
+    }
     profileEvidence := wave.ProfileEvidence(operation.ID, operation.Revision, profile, at.Add(2*time.Millisecond))
     for index, evidence := range profileEvidence {
         evidence.SourceID = "probe-" + string(rune('a'+index%2))
@@ -137,12 +156,19 @@ func (l *Laboratory) Exercise(at time.Time) map[string]any {
         l.Permits.ObserveBrake(operation.ID, receipt)
     }
     emergencyResult := l.Emergency.Execute(operation.ID, command.ID, command.Epoch, brakeErr, at.Add(7*time.Millisecond))
+    for index, stage := range []model.RunStage{model.StageDecelerating, model.StageSettling, model.StageComplete} {
+        record, recordErr := journal.StageRecord(operation.ID, stage, at.Add(time.Duration(7+index)*time.Millisecond))
+        if recordErr == nil {
+            _ = l.Store.Append(record)
+        }
+    }
     l.TrackState.Clear(operation.ID, lease.Fence)
     _ = l.Tracks.Release(operation.ID)
     records := l.Store.Records()
     snapshot, snapshotErr := l.Snapshots.SaveRecords(records, at.Add(8*time.Millisecond))
     scenario := StandardScenario(operation.ID, operation.Revision, at)
     merged := MergeScenarios("commissioning evidence", scenario)
+    replay := ReplayScenario("commissioning replay", operation.ID, operation.Revision, records)
     audit := AuditLaboratory(l, operation.ID, lease.Fence, at.Add(9*time.Millisecond))
     reachability := ExerciseReachability(l, at.Add(10*time.Millisecond))
     l.Tracer.End(span, at.Add(9*time.Millisecond))
@@ -161,6 +187,8 @@ func (l *Laboratory) Exercise(at time.Time) map[string]any {
         "snapshot_runs": journal.SnapshotRuns(snapshot),
         "snapshot_error": errorText(snapshotErr),
         "scenario": merged.Summary(),
+        "replay": replay.Summary(),
+        "replay_events": replay.Events(),
         "audit": audit,
         "audit_failures": audit.FailedChecks(),
         "audit_map": audit.CheckMap(),

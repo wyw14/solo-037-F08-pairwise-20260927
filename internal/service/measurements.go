@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wyw14/solo-037/internal/journal"
 	"github.com/wyw14/solo-037/internal/model"
 	"github.com/wyw14/solo-037/internal/probe"
 )
@@ -198,9 +199,35 @@ func (r *Runtime) RecordMeasurement(id model.RunID, input MeasurementInput) (mod
 	return r.Measurements.Record(id, input)
 }
 
+// MeasuredRunScenario rebuilds the timeline of an operator run from its
+// persisted stage and measurement records, distinguishing real frames from
+// missing process segments.
+func (a *MeasurementArchive) Scenario(id model.RunID) (*Scenario, error) {
+	run, exists := a.Get(id)
+	if !exists {
+		return nil, errors.New("run not found")
+	}
+	records := make([]journal.Record, 0, len(run.Evidence)+1)
+	if stageRecord, err := journal.StageRecord(run.Operation.ID, run.Operation.Stage, run.Operation.CreatedAt); err == nil {
+		records = append(records, stageRecord)
+	}
+	for _, evidence := range run.Evidence {
+		record, err := journal.EvidenceRecord(evidence.WithDurability(true), evidence.RecordedAt)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return ReplayScenario(run.Operation.Name+" replay", run.Operation.ID, run.Operation.Revision, records), nil
+}
+
 func (r *Runtime) MeasuredRuns() []MeasuredRun { return r.Measurements.List() }
 
 func (r *Runtime) MeasuredRun(id model.RunID) (MeasuredRun, bool) { return r.Measurements.Get(id) }
+
+func (r *Runtime) ReplayMeasuredRun(id model.RunID) (*Scenario, error) {
+	return r.Measurements.Scenario(id)
+}
 
 func (r *Runtime) AnalyzeMeasuredRun(id model.RunID) (MeasurementAnalysis, error) {
 	return r.Measurements.Analyze(id)
